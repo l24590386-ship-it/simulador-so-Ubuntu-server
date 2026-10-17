@@ -1,0 +1,107 @@
+{% extends "base.html" %}{% block title %}03 · Procesos y PCB{% endblock %}
+{% block bodyattr %}data-lock="1"{% endblock %}
+{% block content %}
+<h1>03 · Procesos, PCB y planificador <span>/ Round Robin</span></h1>
+<p class="sub">Los procesos que ves nacieron en el arranque (systemd = PID 1). Haz clic en cualquier proceso para inspeccionar su PCB.</p>
+<div class="bar">
+  <button class="btn p" id="bTick">⏭ Siguiente tick</button>
+  <button class="btn" id="bAuto">▶ Auto</button>
+  <button class="btn" id="bRst">↺ Reiniciar procesos</button>
+  <a class="btn" href="/procesador">← Ver la CPU</a>
+  <a class="btn d" href="/arranque" id="bOff">⏻ Apagar (volver al arranque)</a>
+</div>
+<div class="grid g5" style="margin-bottom:16px">
+  <div class="stat"><small>Reloj</small><b id="mR">0</b></div><div class="stat"><small>Uso CPU útil</small><b id="mU" style="color:var(--gr)">0%</b></div>
+  <div class="stat"><small>Cambios de contexto</small><b id="mC">0</b></div><div class="stat"><small>Espera promedio</small><b id="mE" style="color:#c084fc">0</b></div>
+  <div class="stat"><small>Quantum</small><b id="mQ" style="color:var(--ye)">0/4</b><div class="bar-bg"><i id="mQb" style="width:0"></i></div></div>
+</div>
+<div class="panel"><h2>Diagrama de estados (clic en un proceso → PCB)</h2>
+  <div class="grid g5">
+    <div class="col"><h3 style="color:var(--cy)">LISTO <span id="nL">0</span></h3><div class="flow" id="fL"></div></div>
+    <div class="col"><h3 style="color:var(--or)">EJECUCIÓN</h3><div class="bigcpu" id="fC"></div></div>
+    <div class="col"><h3 style="color:var(--ro)">BLOQUEADO <span id="nB">0</span></h3><div class="flow" id="fB"></div></div>
+    <div class="col"><h3 style="color:var(--ye)">DETENIDO (T) <span id="nS">0</span></h3><div class="flow" id="fS"></div></div>
+    <div class="col"><h3 style="color:var(--gr)">ZOMBI (Z) <span id="nT">0</span></h3><div class="flow" id="fT"></div>
+      <button class="btn s" style="margin-top:8px" id="bWaitAll">wait() a todos → X</button></div>
+  </div>
+  <div class="mu mono" id="trans" style="font-size:.68em;margin-top:10px"></div>
+</div>
+<div class="panel"><h2>Línea de tiempo del CPU (últimos 60 ticks · rayado = cambio de contexto)</h2><div class="gantt" id="gantt"></div></div>
+<div class="grid g2">
+  <div>
+    <div class="panel"><h2>PCB · Bloque de control de proceso</h2><div id="pcb"><span class="empty">Selecciona un proceso.</span></div></div>
+    <div class="panel"><h2>Dispositivos de E/S</h2><div class="grid g2" id="devs"></div></div>
+    <div class="panel"><h2>Concurrencia: semáforos y recursos</h2><div id="sync"></div>
+      <div class="bar" style="margin:10px 0 0"><button class="btn s d" id="dCar">⚠ Demo: condición de carrera</button><button class="btn s" id="dMut">🔒 Demo: con mutex (P/V)</button></div></div>
+    <div class="panel"><h2>Crear proceso</h2>
+      <div class="grid g3"><div><label>Nombre</label><input id="fN" value="mi-app"></div><div><label>Ráfaga (instr.)</label><input id="fR" type="number" value="8" min="2" max="60"></div><div><label>Prioridad</label><input id="fP" type="number" value="5" min="1" max="10"></div></div>
+      <div class="grid g3" style="margin-top:8px"><div><label>E/S a dispositivo</label><select id="fD"><option value="">ninguna</option><option>disco</option><option>red</option><option>teclado</option><option>impresora</option></select></div><div><label>En instrucción</label><input id="fI" type="number" value="3" min="1"></div><div><label>Duración (ticks)</label><input id="fU" type="number" value="4" min="1" max="30"></div></div>
+      <button class="btn p" style="margin-top:10px" id="bCrear">+ Crear proceso</button></div>
+  </div>
+  <div>
+    <div class="panel"><h2>Terminal Ubuntu · top</h2><div class="term" id="top"></div></div>
+    <div class="panel"><h2>Bitácora del kernel (IRQ, despachos, bloqueos)</h2><div class="log" id="bit"></div></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+let sel = null, auto = null;
+const $ = id => document.getElementById(id);
+const USER = {nginx:'www-data', 'mysql-db':'mysql', sshd:'root', systemd:'root'};
+const chip = p => `<span class="chip ${sel===p.pid?'sel':''}" style="border-color:${Lab.color(p.pid)};color:${Lab.color(p.pid)}" onclick="pick(${p.pid})">P${p.pid} ${Lab.esc(p.nombre)}</span>`;
+function pick(pid){ sel = pid; render(Lab.state); }
+const stopAuto = () => { clearInterval(auto); auto = null; $('bAuto').textContent = '▶ Auto'; };
+$('bWaitAll').onclick = () => Lab.post('/api/wait');
+$('bTick').onclick = () => Lab.post('/api/tick');
+$('bAuto').onclick = () => { if (auto) return stopAuto(); $('bAuto').textContent = '⏸ Pausar'; auto = setInterval(async () => { const d = await Lab.post('/api/tick'); if (!d) stopAuto(); }, 800); };
+$('bRst').onclick = () => { stopAuto(); sel = null; Lab.post('/api/reiniciar'); };
+$('bOff').onclick = () => { stopAuto(); fetch('/api/apagar', {method:'POST'}); };
+$('dCar').onclick = () => Lab.post('/api/demo/carrera'); $('dMut').onclick = () => Lab.post('/api/demo/mutex');
+$('bCrear').onclick = () => { const disp = $('fD').value;
+  Lab.post('/api/proceso', {nombre: $('fN').value, rafaga: +$('fR').value, prioridad: +$('fP').value, io: disp ? {disp, pc: +$('fI').value, dur: +$('fU').value} : null}); };
+window.forzar = pid => Lab.post(`/api/es/${pid}/forzar`);
+window.sig = (pid, s) => Lab.post(`/api/senal/${pid}/${s}`);
+window.waitp = pid => Lab.post(`/api/wait/${pid}`);
+
+function render(d){
+  if (!d) return; const m = d.metricas;
+  $('mR').textContent = d.reloj; $('mU').textContent = m.uso_cpu_pct + '%'; $('mC').textContent = m.cambios_contexto; $('mE').textContent = m.espera_promedio;
+  const qu = d.cpu ? d.quantum_usado : 0; $('mQ').textContent = `${qu}/${d.quantum}`; $('mQb').style.width = (qu / d.quantum * 100) + '%';
+  $('nL').textContent = d.cola_listos.length; $('nB').textContent = d.bloqueados.length; $('nT').textContent = d.terminados.length; $('nS').textContent = d.detenidos.length;
+  $('fL').innerHTML = d.cola_listos.map(chip).join('') || '<span class="empty">cola vacía</span>';
+  $('fB').innerHTML = d.bloqueados.map(p => chip(p) + `<small class="mu">${p.dispositivo_espera ? '⏳'+p.dispositivo_espera : '🔒'+(p.esperando_semaforo||'')}</small>`).join('') || '<span class="empty">sin bloqueos</span>';
+  $('fS').innerHTML = d.detenidos.map(chip).join('') || '<span class="empty">—</span>';
+  $('fT').innerHTML = d.terminados.map(chip).join('') || '<span class="empty">—</span>';
+  $('fC').className = 'bigcpu' + (d.cpu ? ' on' : '');
+  $('fC').innerHTML = d.cpu ? `${chip(d.cpu)}<div class="mono mu" style="font-size:.7em;margin-top:6px">PC=${d.cpu.pc} · restan ${d.cpu.restante}</div><div class="bar-bg"><i style="width:${d.cpu.pc/d.cpu.rafaga*100}%"></i></div>` : '<span class="empty">CPU ociosa</span>';
+  $('trans').textContent = 'Transiciones: ' + (Object.entries(d.transiciones).map(([k,v]) => `${k} ×${v}`).join('  ·  ') || '—');
+  $('gantt').innerHTML = d.linea.map(s => `<div class="${s.k}" title="t=${s.t}" style="background:${s.pid?Lab.color(s.pid):''}">${s.pid ? s.pid : ''}</div>`).join('') || '<span class="empty">Aún sin ticks.</span>';
+
+  const p = d.todos.find(x => x.pid === sel);
+  $('pcb').innerHTML = p ? `<div style="display:flex;justify-content:space-between"><b style="color:${Lab.color(p.pid)}">P${p.pid} · ${Lab.esc(p.nombre)}</b><span class="pill encendida" style="font-size:.7em">${p.estado}</span></div>
+    <div class="regs"><div class="reg"><small>PC</small>${p.pc}</div>${Object.entries(p.registros).map(([k,v]) => `<div class="reg"><small>${k}</small>${v}</div>`).join('')}</div>
+    <div class="kv"><span>Progreso</span><span>${p.pc}/${p.rafaga} instrucciones</span><span>PPID (padre)</span><span>${p.ppid}</span><span>Prioridad</span><span>${p.prioridad}</span>${p.codigo_salida!==null?`<span>Código de salida</span><span>${p.codigo_salida}</span>`:''}${p.senales_pendientes.length?`<span>Señales pendientes</span><span style="color:var(--ye)">${p.senales_pendientes.join(', ')}</span>`:''}<span>Memoria</span><span>${p.memoria_kb} KB</span>
+    <span>CPU usada / espera</span><span>${p.t_cpu} / ${p.t_espera} ticks</span>${p.instruccion_siguiente ? `<span>Próxima instr.</span><span class="mono">${Lab.esc(p.instruccion_siguiente)}</span>` : ''}</div>
+    ${p.estado === 'ZOMBI' ? `<button class="btn s" style="margin-top:8px" onclick="waitp(${p.pid})">wait() del padre → X</button>` : `<div class="bar" style="margin:8px 0 0">
+      <button class="btn s" onclick="sig(${p.pid},'stop')">Ctrl+Z · SIGSTOP</button><button class="btn s" onclick="sig(${p.pid},'cont')">SIGCONT</button>
+      <button class="btn s d" onclick="sig(${p.pid},'term')">SIGTERM</button><button class="btn s d" onclick="sig(${p.pid},'kill')">kill -9</button></div>`}
+    ${p.estado === 'BLOQUEADO' && p.dispositivo_espera ? `<button class="btn s" style="margin-top:8px" onclick="forzar(${p.pid})">⚡ Terminar E/S ahora (IRQ)</button>` : ''}
+    <div class="log" style="margin-top:10px;max-height:130px">${p.historial.map(h => `<div><span class="mu">t=${h.t}</span> ${h.de} → <b>${h.a}</b> <span class="mu">${Lab.esc(h.motivo)}</span></div>`).join('')}</div>` : '<span class="empty">Selecciona un proceso en el diagrama o en top.</span>';
+
+  $('devs').innerHTML = d.dispositivos.map(v => `<div class="dev"><b style="color:var(--cy)">${v.nombre}</b> <span style="float:right;color:${v.atendiendo?'var(--ye)':'var(--mu)'}">${v.atendiendo ? 'P'+v.atendiendo+' ('+v.restante+')' : 'libre'}</span><div class="mu">cola: ${v.cola.map(x => 'P'+x).join(' ') || '—'}</div></div>`).join('');
+  $('sync').innerHTML = d.semaforos.map(s => `<div class="dev" style="margin-bottom:6px"><b>${s.nombre}</b> (${s.tipo}) valor=<b>${s.valor}</b> · dentro: ${s.titulares.map(x=>'P'+x).join(' ')||'—'} · espera: ${s.cola.map(x=>'P'+x).join(' ')||'—'}</div>`).join('') +
+    d.recursos.map(r => `<div class="dev" style="margin-bottom:6px"><b>${r.nombre}</b> valor=<b>${r.valor}</b> · esperado=<b>${r.esperado}</b> ${r.perdidas ? `<span class="t-CARRERA">⚠ ${r.perdidas} actualización(es) perdida(s)</span>` : '<span style="color:var(--gr)">✔ consistente</span>'} · máx. dentro a la vez: ${r.max_dentro}</div>`).join('');
+
+  const rows = d.todos.filter(p => p.estado !== 'MUERTO').map(p => ({p, s: p.estado === 'EJECUCION' ? 'R' : p.estado === 'LISTO' ? 'R' : p.estado === 'BLOQUEADO' ? (p.dispositivo_espera ? 'D' : 'S') : p.estado === 'DETENIDO' ? 'T' : 'Z', cpu: d.reloj ? 100 * p.t_cpu / d.reloj : 0}))
+    .sort((a,b) => b.cpu - a.cpu), run = d.cpu ? 1 : 0, ready = d.cola_listos.length;
+  $('top').innerHTML = `<div style="color:#8ae234;font-weight:700">top - up ${d.reloj} ticks, load average: ${(run+ready).toFixed(2)}</div>
+    <div>Tasks: ${d.todos.length - d.muertos} total, ${run+ready} running, ${d.bloqueados.length} sleeping, ${d.detenidos.length} stopped, ${d.terminados.length} zombie</div>
+    <div>%Cpu(s): ${m.uso_cpu_pct} us, ${m.sobrecarga_cc_pct} sy, ${m.ocioso_pct} id</div>
+    <div class="hd"><span>PID</span><span>PPID</span><span>USER</span><span>PR</span><span>S</span><span>RES</span><span>%CPU</span><span>TIME+</span><span>COMMAND</span></div>` +
+    (rows.map(({p,s,cpu}) => `<div class="row" style="cursor:pointer;${sel===p.pid?'background:#5c3566':''}${s==='R'&&p.estado==='EJECUCION'?';color:#fce94f':''}" onclick="pick(${p.pid})"><span>${p.pid}</span><span>${p.ppid}</span><span>${USER[p.nombre]||'root'}</span><span>${p.prioridad}</span><span>${s}</span><span>${p.memoria_kb}K</span><span>${cpu.toFixed(1)}</span><span>${p.t_cpu}</span><span>${s==='Z'?'['+Lab.esc(p.nombre)+'] &lt;defunct&gt;':Lab.esc(p.nombre)}</span></div>`).join('') || '<div class="mu">(sin procesos)</div>') +
+    `<div class="mu" style="margin-top:8px;border-top:1px solid #5c3566;padding-top:4px">R=${run+ready} · S=${d.bloqueados.filter(p=>!p.dispositivo_espera).length} · D=${d.bloqueados.filter(p=>p.dispositivo_espera).length} · T=${d.detenidos.length} · Z=${d.terminados.length} · X=${d.muertos} (eliminados de la tabla)</div>`;
+  const col = {IRQ:'IRQ',DESPACHO:'DESPACHO',QUANTUM:'QUANTUM',BLOQUEO:'BLOQUEO',FIN:'FIN',CARRERA:'CARRERA'};
+  $('bit').innerHTML = [...d.bitacora].reverse().map(e => `<div><span class="mu">t=${String(e.t).padStart(3)}</span> <span class="tag t-${(col[e.tipo]||e.tipo).replace(/\W/g,'')}">${Lab.esc(e.tipo)}</span> ${Lab.esc(e.msg)}</div>`).join('');
+}
+Lab.on(render);
+</script>{% endblock %}

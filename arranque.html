@@ -1,0 +1,56 @@
+{% extends "base.html" %}{% block title %}01 · Arranque{% endblock %}
+{% block content %}
+<h1>01 · Secuencia de arranque <span>/ Ubuntu Server 24.04 LTS</span></h1>
+<p class="sub">Esto no es una animación suelta: al llegar al paso 7 el kernel crea a <b>systemd (PID 1)</b> y en el paso 8 los servicios. Esos procesos son los que verás en los módulos 02 y 03.</p>
+<div class="bar">
+  <button class="btn p" id="bAuto">▶ Encender y arrancar</button>
+  <button class="btn" id="bStep">⏭ Paso a paso</button>
+  <button class="btn d" id="bOff">⏻ Apagar</button>
+  <a class="btn p hidden" id="bNext" href="/procesador">Siguiente: la CPU →</a>
+</div>
+<div class="bar-bg" style="height:8px;margin-bottom:16px"><i id="prog" style="width:0"></i></div>
+<div class="grid g4" id="steps"></div>
+<div class="grid g2" style="margin-top:16px">
+  <div class="panel"><h2 id="iT">Máquina apagada</h2><p id="iX" style="font-size:.88em;line-height:1.6;color:var(--mu)">Pulsa «Encender y arrancar» para recorrer la secuencia completa.</p></div>
+  <div class="panel"><h2>Consola del kernel (dmesg)</h2><div class="log" id="dmesg" style="min-height:130px"></div></div>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+let auto = null, built = false;
+const LC = {Hardware:'#fbbf24',Firmware:'#c084fc',Bootloader:'#38bdf8',Kernel:'#ff6b35','Espacio de usuario':'#00ff88'};
+function stop(){ clearInterval(auto); auto = null; document.getElementById('bAuto').textContent = '▶ Encender y arrancar'; }
+document.getElementById('bAuto').onclick = () => {
+  if (auto) return stop();
+  if (Lab.state.maquina.fase === 'encendida') return Lab.toast('Ya está encendida. Apaga para repetir.');
+  document.getElementById('bAuto').textContent = '⏸ Pausar';
+  const go = async () => { const d = await Lab.post('/api/arranque/siguiente'); if (!d || d.maquina.fase === 'encendida') stop(); };
+  go(); auto = setInterval(go, 1500);
+};
+document.getElementById('bStep').onclick = () => Lab.post('/api/arranque/siguiente');
+document.getElementById('bOff').onclick = async () => { stop(); await Lab.post('/api/apagar'); };
+
+Lab.on(d => {
+  const m = d.maquina, box = document.getElementById('steps');
+  if (!built) {
+    box.innerHTML = m.pasos.map((p, i) => `<div class="panel" id="s${i}" style="border-width:2px;transition:.4s">
+      <small class="mono" style="color:${LC[p.capa]}">${String(i+1).padStart(2,'0')} · ${p.capa}</small>
+      <div style="font-weight:700;margin:5px 0;font-size:.9em">${Lab.esc(p.titulo)}</div></div>`).join(''); built = true;
+  }
+  m.pasos.forEach((p, i) => {
+    const done = m.fase === 'encendida' ? i < m.paso - 1 : i < m.paso - 1, act = i === m.paso - 1;
+    const el = document.getElementById('s' + i);
+    el.style.borderColor = act ? '#00ff88' : done ? 'rgba(0,212,255,.5)' : 'var(--line)';
+    el.style.boxShadow = act ? '0 0 25px rgba(0,255,136,.4)' : 'none';
+    el.style.opacity = i < m.paso ? 1 : .45; el.style.transform = act ? 'scale(1.03)' : 'none';
+  });
+  const cur = m.pasos[m.paso - 1];
+  document.getElementById('iT').textContent = cur ? `[${m.paso}/${m.total}] ${cur.titulo}` : 'Máquina apagada';
+  document.getElementById('iX').textContent = cur ? cur.texto : 'Pulsa «Encender y arrancar» para recorrer la secuencia completa.';
+  document.getElementById('prog').style.width = (m.paso / m.total * 100) + '%';
+  const dm = document.getElementById('dmesg');
+  dm.innerHTML = m.consola.map(l => `<div>${Lab.esc(l)}</div>`).join('') || '<span class="empty">(sin salida: la máquina está apagada)</span>';
+  dm.scrollTop = dm.scrollHeight;
+  document.getElementById('bNext').classList.toggle('hidden', m.fase !== 'encendida');
+  if (m.fase === 'encendida' && auto) stop();
+});
+</script>{% endblock %}

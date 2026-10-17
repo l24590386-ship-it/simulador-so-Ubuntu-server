@@ -1,0 +1,72 @@
+{% extends "base.html" %}{% block title %}02 · El Procesador{% endblock %}
+{% block bodyattr %}data-lock="1"{% endblock %}
+{% block content %}
+<h1>02 · El Procesador <span>/ 4 núcleos × 2 hilos · 3.6 GHz</span></h1>
+<p class="sub">Cada «Ejecutar instrucción» avanza un tick del kernel real: la CPU ejecuta la instrucción del proceso que el planificador Round Robin eligió, y los registros que ves son los de su PCB.</p>
+<div class="bar">
+  <button class="btn p" id="bOne">⏭ Ejecutar 1 instrucción</button>
+  <button class="btn" id="bAuto">▶ Auto</button>
+  <a class="btn" href="/">Ver procesos y PCB →</a>
+</div>
+<div class="grid g2">
+  <div class="panel"><h2>Chip · 4 núcleos / 8 hilos</h2>
+    <div class="grid g2" id="cores"></div>
+    <p class="mu" style="font-size:.7em;margin-top:10px">El laboratorio planifica sobre un hilo lógico (Core 0 · T0); el resto queda libre para que veas la diferencia entre hardware disponible y proceso en ejecución.</p>
+  </div>
+  <div>
+    <div class="panel"><h2>Ciclo de instrucción</h2>
+      <div class="grid g4" id="cyc"></div>
+      <div id="disp" class="mono" style="background:#000;border:1px solid var(--line);border-radius:8px;padding:12px;margin-top:12px;min-height:56px;color:var(--gr);font-size:.82em">[IDLE] Ejecuta una instrucción…</div>
+    </div>
+    <div class="panel"><h2>PCB del proceso en CPU</h2><div id="pcb"></div></div>
+  </div>
+</div>
+<div class="grid g3"><div class="stat"><small>Instrucciones útiles</small><b id="mU">0</b></div><div class="stat"><small>Ticks de cambio de contexto</small><b id="mC" style="color:var(--or)">0</b></div><div class="stat"><small>CPU ociosa</small><b id="mI" style="color:var(--gr)">0%</b></div></div>
+{% endblock %}
+{% block scripts %}<script>
+const FASES = [['BUSCAR','UC','#00d4ff'],['DECODIFICAR','UC','#00d4ff'],['EJECUTAR','ALU','#ff6b35'],['ALMACENAR','REG','#00ff88']];
+const OPS = ['LOAD AX,[mem]','ADD AX,PC','MUL BX,3','ADD BX,1','XOR DX,AX^BX','STORE [mem],DX'];
+document.getElementById('cores').innerHTML = [0,1,2,3].map(i => `<div class="panel" id="c${i}" style="padding:10px;margin:0"><small class="mono mu">CORE ${i}</small>
+  ${[0,1].map(t => `<div class="chip" id="c${i}t${t}" style="display:flex;margin-top:6px;opacity:.5;cursor:default">T${t} · libre</div>`).join('')}</div>`).join('');
+document.getElementById('cyc').innerHTML = FASES.map((f,i) => `<div class="stat" id="f${i}" style="transition:.25s"><b style="font-size:1em;color:${f[2]}">${i+1}</b><small>${f[0]}</small><div class="mu" style="font-size:.6em">${f[1]}</div></div>`).join('');
+let busy = false, auto = null;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function hi(i){ FASES.forEach((_,k) => { const e = document.getElementById('f'+k); e.style.borderColor = k===i ? FASES[k][2] : ''; e.style.transform = k===i ? 'scale(1.07)' : 'none'; }); }
+function show(tag, col, html){ document.getElementById('disp').innerHTML = `<span style="color:${col};font-weight:700">[${tag}]</span> ${html}`; }
+
+async function paso(){
+  if (busy) return; busy = true;
+  const antes = Lab.state, d = await Lab.post('/api/tick');
+  if (!d) { busy = false; return; }
+  const s = d.linea[d.linea.length - 1], p = s && d.todos.find(x => x.pid === s.pid);
+  if (!s || antes.reloj === d.reloj) { show('FIN','#00ff88','No queda trabajo: todos los procesos terminaron.'); busy = false; stopAuto(); return; }
+  if (s.k === 'idle') { for (let i = 0; i < 4; i++){ hi(i); await sleep(120); } show('HLT','#fbbf24','Nadie está LISTO: la CPU espera una interrupción (E/S completa).'); }
+  else if (s.k === 'cc') { hi(0); show('CAMBIO','#fbbf24',`Guarda el PCB del proceso anterior y restaura el de <b>P${p.pid} ${Lab.esc(p.nombre)}</b> (PC=${p.pc}). Sobrecarga: este tick no ejecuta código útil.`); await sleep(600); }
+  else {
+    const pcA = p.pc - 1, instr = p.ultima_instruccion || OPS[pcA % OPS.length], addr = '0x' + (0x400000 + pcA*4).toString(16);
+    show('FETCH','#00d4ff',`PC=${pcA} → mem[${addr}] de <b>P${p.pid} ${Lab.esc(p.nombre)}</b>`); hi(0); await sleep(400);
+    show('DECODE','#00d4ff',`UC interpreta: <b>${Lab.esc(instr)}</b>`); hi(1); await sleep(400);
+    show('EXECUTE','#ff6b35',`ALU ejecuta ${Lab.esc(instr)}`); hi(2); await sleep(400);
+    show('STORE','#00ff88',`Registros → AX=${p.registros.AX} BX=${p.registros.BX} · PC avanza a ${p.pc}`); hi(3); await sleep(400);
+  }
+  hi(-1); busy = false;
+}
+function stopAuto(){ clearInterval(auto); auto = null; document.getElementById('bAuto').textContent = '▶ Auto'; }
+document.getElementById('bOne').onclick = paso;
+document.getElementById('bAuto').onclick = () => { if (auto) return stopAuto(); document.getElementById('bAuto').textContent = '⏸ Pausar'; paso(); auto = setInterval(paso, 2100); };
+
+Lab.on(d => {
+  for (let i = 0; i < 4; i++) for (let t = 0; t < 2; t++){
+    const e = document.getElementById(`c${i}t${t}`), on = i === 0 && t === 0 && d.cpu;
+    e.style.opacity = on ? 1 : .5; e.style.borderColor = on ? Lab.color(d.cpu.pid) : '';
+    e.textContent = on ? `T0 · P${d.cpu.pid} ${d.cpu.nombre}` : `T${t} · libre`;
+    document.getElementById('c'+i).style.borderColor = (on) ? '#00ff88' : '';
+  }
+  const p = d.cpu || (d.linea.length && d.todos.find(x => x.pid === d.linea.filter(l => l.pid).slice(-1)[0]?.pid));
+  document.getElementById('pcb').innerHTML = p ? `<div class="mu" style="font-size:.72em;margin-bottom:4px">${d.cpu ? 'En ejecución' : 'Último en CPU'} · estado ${p.estado}</div>
+    <b style="color:${Lab.color(p.pid)}">P${p.pid} ${Lab.esc(p.nombre)}</b> <span class="mu mono">PC=${p.pc}/${p.rafaga}</span>
+    <div class="regs">${Object.entries(p.registros).map(([k,v]) => `<div class="reg"><small>${k}</small>${v}</div>`).join('')}</div>` : '<span class="empty">Ningún proceso ha usado la CPU todavía.</span>';
+  const m = d.metricas; document.getElementById('mU').textContent = d.reloj ? Math.round(m.uso_cpu_pct * d.reloj / 100) : 0;
+  document.getElementById('mC').textContent = Math.round(m.sobrecarga_cc_pct * d.reloj / 100); document.getElementById('mI').textContent = m.ocioso_pct + '%';
+});
+</script>{% endblock %}

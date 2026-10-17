@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}{% endblock %} · Laboratorio SO</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/lab.css') }}"></head>
+<body data-page="{{ page }}" {% block bodyattr %}{% endblock %}>
+<nav>
+  <span class="brand">⌬ SIMULADOR DE ADMINISTRADOR DE PROCESOS EN UBUNTU SERVER </span>
+  <a href="/arranque" data-nav="arranque">01 · Arranque <i></i></a>
+  <a href="/procesador" data-nav="cpu">02 · El Procesador <i></i></a>
+  <a href="/" data-nav="procesos">03 · Procesos y PCB <i></i></a>
+  <div class="strip">
+    <span id="sPill" class="pill apagada">APAGADA</span>
+    <span>t=<b id="sReloj">0</b></span>
+    <span>CPU: <b id="sCpu">—</b></span>
+  </div>
+</nav>
+<div id="lock" class="lock hidden"><div>
+  <h2>⏻ Máquina apagada</h2>
+  <p>Este módulo depende del anterior: los procesos y el procesador solo existen cuando el kernel ya arrancó y <b>systemd</b> (PID 1) creó los servicios.</p>
+  <a class="btn p" href="/arranque">Ir al arranque →</a>
+</div></div>
+<main class="wrap">{% block content %}{% endblock %}</main>
+<div id="toast"></div>
+<script src="{{ url_for('static', filename='js/lab.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body></html>
